@@ -13,8 +13,8 @@ import java.nio.charset.StandardCharsets;
 @Configuration
 public class FirebaseConfig {
 
-    @Value("${firebase.serviceAccountJson:}")
-    private String serviceAccountJson;
+@Value("${FIREBASE_SERVICE_ACCOUNT_JSON:}")
+private String serviceAccountJson;
 
     @PostConstruct
     public void init() {
@@ -24,6 +24,8 @@ public class FirebaseConfig {
             if (serviceAccountJson == null || serviceAccountJson.trim().isEmpty()) {
                 throw new RuntimeException("FIREBASE_SERVICE_ACCOUNT_JSON is empty. Add it in Railway Variables.");
             }
+
+	    serviceAccountJson = serviceAccountJson.replace("\\n", "\n");
 
             ByteArrayInputStream serviceAccountStream =
                     new ByteArrayInputStream(serviceAccountJson.getBytes(StandardCharsets.UTF_8));
