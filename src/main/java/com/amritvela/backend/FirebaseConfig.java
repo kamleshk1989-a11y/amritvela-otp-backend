@@ -3,43 +3,45 @@ package com.amritvela.backend;
 import com.google.auth.oauth2.GoogleCredentials;
 import com.google.firebase.FirebaseApp;
 import com.google.firebase.FirebaseOptions;
-import jakarta.annotation.PostConstruct;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Configuration;
 
+import jakarta.annotation.PostConstruct;
 import java.io.ByteArrayInputStream;
 import java.nio.charset.StandardCharsets;
 
 @Configuration
 public class FirebaseConfig {
 
-@Value("${FIREBASE_SERVICE_ACCOUNT_JSON:}")
-private String serviceAccountJson;
-
     @PostConstruct
     public void init() {
         try {
+            // prevent double init
             if (!FirebaseApp.getApps().isEmpty()) return;
 
-            if (serviceAccountJson == null || serviceAccountJson.trim().isEmpty()) {
-                throw new RuntimeException("FIREBASE_SERVICE_ACCOUNT_JSON is empty. Add it in Railway Variables.");
+            String saJson = System.getenv("FIREBASE_SERVICE_ACCOUNT_JSON");
+            if (saJson == null || saJson.trim().isEmpty()) {
+                throw new RuntimeException("Missing FIREBASE_SERVICE_ACCOUNT_JSON");
             }
 
-	    serviceAccountJson = serviceAccountJson.replace("\\n", "\n");
-
-            ByteArrayInputStream serviceAccountStream =
-                    new ByteArrayInputStream(serviceAccountJson.getBytes(StandardCharsets.UTF_8));
+            String dbUrl = System.getenv("FIREBASE_DB_URL");
+            if (dbUrl == null || dbUrl.trim().isEmpty()) {
+                throw new RuntimeException("Missing FIREBASE_DB_URL");
+            }
 
             FirebaseOptions options = FirebaseOptions.builder()
-                    .setCredentials(GoogleCredentials.fromStream(serviceAccountStream))
+                    .setCredentials(GoogleCredentials.fromStream(
+                            new ByteArrayInputStream(saJson.getBytes(StandardCharsets.UTF_8))
+                    ))
+                    .setDatabaseUrl(dbUrl) // ✅ THIS FIXES YOUR ERROR
                     .build();
 
             FirebaseApp.initializeApp(options);
 
-            System.out.println("✅ Firebase Admin initialized (from env var JSON)");
+            System.out.println("✅ Firebase initialized (DB URL set): " + dbUrl);
+
         } catch (Exception e) {
-            System.out.println("❌ Firebase init failed: " + e.getMessage());
             e.printStackTrace();
+            throw new RuntimeException("Firebase init failed: " + e.getMessage(), e);
         }
     }
 }
