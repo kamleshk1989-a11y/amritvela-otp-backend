@@ -101,70 +101,79 @@ public class NotificationController {
      * Token key supported (auto-detect):
      * fcmToken, fcm_token, token, fcm, fcmtoken
      */
-    @GetMapping("/api/send-notification-all-users")
-    public String sendNotificationToAllUsers(
-            @RequestParam(value = "title", defaultValue = "Amritvela") String title,
-            @RequestParam(value = "body", defaultValue = "Testing") String body,
-            @RequestParam(value = "action_type", defaultValue = "OPEN_VIDEO") String actionType,
+@GetMapping("/api/send-notification-all-users")
+public String sendNotificationToAllUsers(
+        @RequestParam("admin_key") String adminKey,
+        @RequestParam(value = "title", defaultValue = "Amritvela") String title,
+        @RequestParam(value = "body", defaultValue = "Testing") String body,
+        @RequestParam(value = "action_type", defaultValue = "OPEN_VIDEO") String actionType,
 
-            @RequestParam(value = "video_url", required = false) String videoUrl,
-            @RequestParam(value = "web_url", required = false) String webUrl,
-            @RequestParam(value = "text", required = false) String text,
+        @RequestParam(value = "video_url", required = false) String videoUrl,
+        @RequestParam(value = "web_url", required = false) String webUrl,
+        @RequestParam(value = "text", required = false) String text,
 
-            @RequestParam(value = "use_notification", defaultValue = "true") boolean useNotification
-    ) throws Exception {
+        @RequestParam(value = "use_notification", defaultValue = "true") boolean useNotification
+) throws Exception {
 
-        List<String> allTokens = fetchAllTokensFromUsersDatabase();
-
-        if (allTokens.isEmpty()) {
-            return "No tokens found in users_database.";
-        }
-
-        String finalType = (actionType == null || actionType.trim().isEmpty()) ? "OPEN_VIDEO" : actionType.trim();
-        String finalVideoUrl = notEmpty(videoUrl) ? videoUrl.trim() : null;
-        String finalWebUrl   = notEmpty(webUrl) ? webUrl.trim() : null;
-
-        int total = allTokens.size();
-        int success = 0;
-        int failure = 0;
-
-        final int BATCH_SIZE = 500; // FCM limit
-
-        for (int i = 0; i < allTokens.size(); i += BATCH_SIZE) {
-            int end = Math.min(i + BATCH_SIZE, allTokens.size());
-            List<String> batch = allTokens.subList(i, end);
-
-            MulticastMessage.Builder mb = MulticastMessage.builder()
-                    .addAllTokens(batch)
-                    .putData("action_type", finalType)
-                    .putData("title", title)
-                    .putData("body", body);
-
-            if ("OPEN_VIDEO".equalsIgnoreCase(finalType) && notEmpty(finalVideoUrl)) {
-                mb.putData("video_url", finalVideoUrl);
-                mb.putData("url", finalVideoUrl); // fallback
-            } else if ("OPEN_WEB".equalsIgnoreCase(finalType) && notEmpty(finalWebUrl)) {
-                mb.putData("web_url", finalWebUrl);
-                mb.putData("url", finalWebUrl);   // fallback
-            }
-
-            if (notEmpty(text)) mb.putData("text", text.trim());
-
-            if (useNotification) {
-                mb.setNotification(Notification.builder().setTitle(title).setBody(body).build());
-            }
-
-            BatchResponse br = FirebaseMessaging.getInstance().sendEachForMulticast(mb.build());
-            success += br.getSuccessCount();
-            failure += br.getFailureCount();
-        }
-
-        return "Sent to ALL users (tokens from DB). TotalTokens=" + total
-                + " Success=" + success
-                + " Failure=" + failure
-                + " | type=" + finalType;
+    // ✅ SECURITY CHECK (must be first)
+    String secret = System.getenv("ADMIN_SECRET_KEY");
+    if (secret == null || secret.trim().isEmpty()) {
+        return "Server missing ADMIN_SECRET_KEY (Railway Variables).";
+    }
+    if (adminKey == null || !secret.equals(adminKey)) {
+        return "Unauthorized";
     }
 
+    List<String> allTokens = fetchAllTokensFromUsersDatabase();
+
+    if (allTokens.isEmpty()) {
+        return "No tokens found in users_database.";
+    }
+
+    String finalType = (actionType == null || actionType.trim().isEmpty()) ? "OPEN_VIDEO" : actionType.trim();
+    String finalVideoUrl = notEmpty(videoUrl) ? videoUrl.trim() : null;
+    String finalWebUrl   = notEmpty(webUrl) ? webUrl.trim() : null;
+
+    int total = allTokens.size();
+    int success = 0;
+    int failure = 0;
+
+    final int BATCH_SIZE = 500; // FCM limit
+
+    for (int i = 0; i < allTokens.size(); i += BATCH_SIZE) {
+        int end = Math.min(i + BATCH_SIZE, allTokens.size());
+        List<String> batch = allTokens.subList(i, end);
+
+        MulticastMessage.Builder mb = MulticastMessage.builder()
+                .addAllTokens(batch)
+                .putData("action_type", finalType)
+                .putData("title", title)
+                .putData("body", body);
+
+        if ("OPEN_VIDEO".equalsIgnoreCase(finalType) && notEmpty(finalVideoUrl)) {
+            mb.putData("video_url", finalVideoUrl);
+            mb.putData("url", finalVideoUrl); // fallback
+        } else if ("OPEN_WEB".equalsIgnoreCase(finalType) && notEmpty(finalWebUrl)) {
+            mb.putData("web_url", finalWebUrl);
+            mb.putData("url", finalWebUrl);   // fallback
+        }
+
+        if (notEmpty(text)) mb.putData("text", text.trim());
+
+        if (useNotification) {
+            mb.setNotification(Notification.builder().setTitle(title).setBody(body).build());
+        }
+
+        BatchResponse br = FirebaseMessaging.getInstance().sendEachForMulticast(mb.build());
+        success += br.getSuccessCount();
+        failure += br.getFailureCount();
+    }
+
+    return "Sent to ALL users (tokens from DB). TotalTokens=" + total
+            + " Success=" + success
+            + " Failure=" + failure
+            + " | type=" + finalType;
+}
     // ----------------- Firebase Admin DB read (NO ref.get()) -----------------
 
     private List<String> fetchAllTokensFromUsersDatabase() throws Exception {
