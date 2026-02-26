@@ -1,16 +1,16 @@
 package com.amritvela.backend;
 
-import com.google.api.core.ApiFuture;
 import com.google.firebase.database.DataSnapshot;
+import com.google.firebase.database.DatabaseError;
 import com.google.firebase.database.DatabaseReference;
 import com.google.firebase.database.FirebaseDatabase;
 
+import com.google.firebase.database.ValueEventListener;
 import com.google.firebase.messaging.BatchResponse;
 import com.google.firebase.messaging.FirebaseMessaging;
 import com.google.firebase.messaging.Message;
 import com.google.firebase.messaging.MulticastMessage;
 import com.google.firebase.messaging.Notification;
-import com.google.firebase.messaging.SendResponse;
 
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -20,6 +20,8 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 
 @RestController
 public class NotificationController {
@@ -112,16 +114,13 @@ public class NotificationController {
             @RequestParam(value = "use_notification", defaultValue = "true") boolean useNotification
     ) throws Exception {
 
-        // 1) Fetch all tokens from DB
         List<String> allTokens = fetchAllTokensFromUsersDatabase();
 
         if (allTokens.isEmpty()) {
             return "No tokens found in users_database.";
         }
 
-        // 2) Prepare data payload
         String finalType = (actionType == null || actionType.trim().isEmpty()) ? "OPEN_VIDEO" : actionType.trim();
-
         String finalVideoUrl = notEmpty(videoUrl) ? videoUrl.trim() : null;
         String finalWebUrl   = notEmpty(webUrl) ? webUrl.trim() : null;
 
@@ -129,8 +128,7 @@ public class NotificationController {
         int success = 0;
         int failure = 0;
 
-        // 3) Send in batches of 500 (FCM limit)
-        final int BATCH_SIZE = 500;
+        final int BATCH_SIZE = 500; // FCM limit
 
         for (int i = 0; i < allTokens.size(); i += BATCH_SIZE) {
             int end = Math.min(i + BATCH_SIZE, allTokens.size());
@@ -157,12 +155,8 @@ public class NotificationController {
             }
 
             BatchResponse br = FirebaseMessaging.getInstance().sendEachForMulticast(mb.build());
-
             success += br.getSuccessCount();
             failure += br.getFailureCount();
-
-            // OPTIONAL: you can later remove invalid tokens here by checking SendResponse exceptions.
-            // List<SendResponse> responses = br.getResponses();
         }
 
         return "Sent to ALL users (tokens from DB). TotalTokens=" + total
@@ -171,29 +165,52 @@ public class NotificationController {
                 + " | type=" + finalType;
     }
 
-    // ----------------- helpers -----------------
+    // ----------------- Firebase Admin DB read (NO ref.get()) -----------------
 
     private List<String> fetchAllTokensFromUsersDatabase() throws Exception {
+
         DatabaseReference ref = FirebaseDatabase.getInstance().getReference("users_database");
 
-        ApiFuture<DataSnapshot> future = ref.get();
-        DataSnapshot snap = future.get(); // waits
+        final CountDownLatch latch = new CountDownLatch(1);
 
-        Set<String> uniq = new HashSet<>();
-        List<String> tokens = new ArrayList<>();
+        final List<String> tokens = new ArrayList<>();
+        final Set<String> uniq = new HashSet<>();
 
-        for (DataSnapshot userSnap : snap.getChildren()) {
-            String t = readTokenFromUserSnapshot(userSnap);
-            if (notEmpty(t)) {
-                t = t.trim();
-                if (uniq.add(t)) tokens.add(t);
+        final String[] errorHolder = new String[1];
+
+        ref.addListenerForSingleValueEvent(new ValueEventListener() {
+            @Override
+            public void onDataChange(DataSnapshot snap) {
+                try {
+                    for (DataSnapshot userSnap : snap.getChildren()) {
+                        String t = readTokenFromUserSnapshot(userSnap);
+                        if (notEmpty(t)) {
+                            t = t.trim();
+                            if (uniq.add(t)) tokens.add(t);
+                        }
+                    }
+                } catch (Exception e) {
+                    errorHolder[0] = "onDataChange error: " + e.getMessage();
+                } finally {
+                    latch.countDown();
+                }
             }
-        }
+
+            @Override
+            public void onCancelled(DatabaseError error) {
+                errorHolder[0] = "DB cancelled: " + error.getMessage();
+                latch.countDown();
+            }
+        });
+
+        boolean ok = latch.await(15, TimeUnit.SECONDS);
+        if (!ok) throw new RuntimeException("DB timeout while reading users_database (15s).");
+        if (errorHolder[0] != null) throw new RuntimeException(errorHolder[0]);
+
         return tokens;
     }
 
     private String readTokenFromUserSnapshot(DataSnapshot userSnap) {
-        // Try multiple common keys so it works without knowing exact field name
         String[] keys = new String[]{"fcmToken", "fcm_token", "token", "fcm", "fcmtoken"};
 
         for (String k : keys) {
@@ -203,12 +220,10 @@ public class NotificationController {
                 if (notEmpty(s)) return s;
             }
         }
-
-        // Sometimes token is nested, e.g. userSnap.child("device").child("fcmToken")
-        // Add more checks here if you want later.
-
         return null;
     }
+
+    // ----------------- helpers -----------------
 
     private boolean notEmpty(String s) {
         return s != null && !s.trim().isEmpty();
