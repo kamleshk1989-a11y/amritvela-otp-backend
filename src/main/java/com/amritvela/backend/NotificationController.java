@@ -4,8 +4,8 @@ import com.google.firebase.database.DataSnapshot;
 import com.google.firebase.database.DatabaseError;
 import com.google.firebase.database.DatabaseReference;
 import com.google.firebase.database.FirebaseDatabase;
-
 import com.google.firebase.database.ValueEventListener;
+
 import com.google.firebase.messaging.BatchResponse;
 import com.google.firebase.messaging.FirebaseMessaging;
 import com.google.firebase.messaging.Message;
@@ -26,6 +26,8 @@ import java.util.concurrent.TimeUnit;
 @RestController
 public class NotificationController {
 
+    // -------------------- BASIC HEALTH --------------------
+
     @GetMapping("/api")
     public String home() {
         return "OK - backend running";
@@ -36,6 +38,7 @@ public class NotificationController {
         return "pong";
     }
 
+    // -------------------- SINGLE TOKEN SEND --------------------
     /**
      * ✅ Single user (token) send
      * Supports BOTH old & new param names:
@@ -60,7 +63,6 @@ public class NotificationController {
     ) throws Exception {
 
         String finalType = firstNonEmpty(actionType, type, "OPEN_VIDEO");
-
         String finalVideoUrl = firstNonEmpty(videoUrl, url);
         String finalWebUrl   = firstNonEmpty(webUrl, url);
 
@@ -94,68 +96,131 @@ public class NotificationController {
                 + " | web_url=" + (finalWebUrl == null ? "" : finalWebUrl);
     }
 
+    // -------------------- ALL USERS SEND (DB TOKENS) --------------------
     /**
      * ✅ SEND TO ALL USERS (NOT TOPIC)
      * Reads tokens from Realtime DB: users_database/*
      *
-     * Token key supported (auto-detect):
+     * Token key supported:
      * fcmToken, fcm_token, token, fcm, fcmtoken
      */
-@GetMapping("/api/send-notification-all-users")
-public String sendNotificationToAllUsers(
-        @RequestParam("admin_key") String adminKey,
-        @RequestParam(value = "title", defaultValue = "Amritvela") String title,
-        @RequestParam(value = "body", defaultValue = "Testing") String body,
-        @RequestParam(value = "action_type", defaultValue = "OPEN_VIDEO") String actionType,
+    @GetMapping("/api/send-notification-all-users")
+    public String sendNotificationToAllUsers(
+            @RequestParam("admin_key") String adminKey,
+            @RequestParam(value = "title", defaultValue = "Amritvela") String title,
+            @RequestParam(value = "body", defaultValue = "Testing") String body,
+            @RequestParam(value = "action_type", defaultValue = "OPEN_VIDEO") String actionType,
 
-        @RequestParam(value = "video_url", required = false) String videoUrl,
-        @RequestParam(value = "web_url", required = false) String webUrl,
-        @RequestParam(value = "text", required = false) String text,
+            @RequestParam(value = "video_url", required = false) String videoUrl,
+            @RequestParam(value = "web_url", required = false) String webUrl,
+            @RequestParam(value = "text", required = false) String text,
 
-        @RequestParam(value = "use_notification", defaultValue = "true") boolean useNotification
-) throws Exception {
+            @RequestParam(value = "use_notification", defaultValue = "true") boolean useNotification
+    ) throws Exception {
 
-    // ✅ SECURITY CHECK (must be first)
-    String secret = System.getenv("ADMIN_SECRET_KEY");
-    if (secret == null || secret.trim().isEmpty()) {
-        return "Server missing ADMIN_SECRET_KEY (Railway Variables).";
+        // ✅ SECURITY CHECK
+        String secret = System.getenv("ADMIN_SECRET_KEY");
+        if (!notEmpty(secret)) {
+            return "Server missing ADMIN_SECRET_KEY (Railway Variables).";
+        }
+        if (!secret.equals(adminKey)) {
+            return "Unauthorized";
+        }
+
+        List<String> allTokens = fetchAllTokensFromUsersDatabase();
+
+        if (allTokens.isEmpty()) {
+            return "No tokens found in users_database.";
+        }
+
+        String finalType = notEmpty(actionType) ? actionType.trim() : "OPEN_VIDEO";
+        String finalVideoUrl = notEmpty(videoUrl) ? videoUrl.trim() : null;
+        String finalWebUrl   = notEmpty(webUrl) ? webUrl.trim() : null;
+
+        int total = allTokens.size();
+        int success = 0;
+        int failure = 0;
+
+        final int BATCH_SIZE = 500; // FCM limit
+
+        for (int i = 0; i < allTokens.size(); i += BATCH_SIZE) {
+            int end = Math.min(i + BATCH_SIZE, allTokens.size());
+            List<String> batch = allTokens.subList(i, end);
+
+            MulticastMessage.Builder mb = MulticastMessage.builder()
+                    .addAllTokens(batch)
+                    .putData("action_type", finalType)
+                    .putData("title", title)
+                    .putData("body", body);
+
+            if ("OPEN_VIDEO".equalsIgnoreCase(finalType) && notEmpty(finalVideoUrl)) {
+                mb.putData("video_url", finalVideoUrl);
+                mb.putData("url", finalVideoUrl); // fallback
+            } else if ("OPEN_WEB".equalsIgnoreCase(finalType) && notEmpty(finalWebUrl)) {
+                mb.putData("web_url", finalWebUrl);
+                mb.putData("url", finalWebUrl);   // fallback
+            }
+
+            if (notEmpty(text)) mb.putData("text", text.trim());
+
+            if (useNotification) {
+                mb.setNotification(Notification.builder().setTitle(title).setBody(body).build());
+            }
+
+            BatchResponse br = FirebaseMessaging.getInstance().sendEachForMulticast(mb.build());
+            success += br.getSuccessCount();
+            failure += br.getFailureCount();
+        }
+
+        return "Sent to ALL users (tokens from DB). TotalTokens=" + total
+                + " Success=" + success
+                + " Failure=" + failure
+                + " | type=" + finalType;
     }
-    if (adminKey == null || !secret.equals(adminKey)) {
-        return "Unauthorized";
-    }
 
-    List<String> allTokens = fetchAllTokensFromUsersDatabase();
+    // -------------------- TOPIC SEND --------------------
+    @GetMapping("/api/send-notification-topic")
+    public String sendNotificationToTopic(
+            @RequestParam("admin_key") String adminKey,
+            @RequestParam("topic") String topic,
+            @RequestParam(value = "title", defaultValue = "Amritvela") String title,
+            @RequestParam(value = "body", defaultValue = "Testing") String body,
+            @RequestParam(value = "action_type", defaultValue = "OPEN_VIDEO") String actionType,
+            @RequestParam(value = "video_url", required = false) String videoUrl,
+            @RequestParam(value = "web_url", required = false) String webUrl,
+            @RequestParam(value = "text", required = false) String text,
+            @RequestParam(value = "use_notification", defaultValue = "true") boolean useNotification
+    ) throws Exception {
 
-    if (allTokens.isEmpty()) {
-        return "No tokens found in users_database.";
-    }
+        // ✅ SECURITY CHECK
+        String secret = System.getenv("ADMIN_SECRET_KEY");
+        if (!notEmpty(secret)) {
+            return "Server missing ADMIN_SECRET_KEY (Railway Variables).";
+        }
+        if (!secret.equals(adminKey)) {
+            return "Unauthorized";
+        }
 
-    String finalType = (actionType == null || actionType.trim().isEmpty()) ? "OPEN_VIDEO" : actionType.trim();
-    String finalVideoUrl = notEmpty(videoUrl) ? videoUrl.trim() : null;
-    String finalWebUrl   = notEmpty(webUrl) ? webUrl.trim() : null;
+        if (!notEmpty(topic)) {
+            return "Topic missing";
+        }
 
-    int total = allTokens.size();
-    int success = 0;
-    int failure = 0;
+        String finalType = notEmpty(actionType) ? actionType.trim() : "OPEN_VIDEO";
+        String finalVideoUrl = notEmpty(videoUrl) ? videoUrl.trim() : null;
+        String finalWebUrl   = notEmpty(webUrl) ? webUrl.trim() : null;
 
-    final int BATCH_SIZE = 500; // FCM limit
-
-    for (int i = 0; i < allTokens.size(); i += BATCH_SIZE) {
-        int end = Math.min(i + BATCH_SIZE, allTokens.size());
-        List<String> batch = allTokens.subList(i, end);
-
-        MulticastMessage.Builder mb = MulticastMessage.builder()
-                .addAllTokens(batch)
+        Message.Builder mb = Message.builder()
+                .setTopic(topic.trim())
                 .putData("action_type", finalType)
                 .putData("title", title)
                 .putData("body", body);
 
         if ("OPEN_VIDEO".equalsIgnoreCase(finalType) && notEmpty(finalVideoUrl)) {
             mb.putData("video_url", finalVideoUrl);
-            mb.putData("url", finalVideoUrl); // fallback
+            mb.putData("url", finalVideoUrl);
         } else if ("OPEN_WEB".equalsIgnoreCase(finalType) && notEmpty(finalWebUrl)) {
             mb.putData("web_url", finalWebUrl);
-            mb.putData("url", finalWebUrl);   // fallback
+            mb.putData("url", finalWebUrl);
         }
 
         if (notEmpty(text)) mb.putData("text", text.trim());
@@ -164,27 +229,20 @@ public String sendNotificationToAllUsers(
             mb.setNotification(Notification.builder().setTitle(title).setBody(body).build());
         }
 
-        BatchResponse br = FirebaseMessaging.getInstance().sendEachForMulticast(mb.build());
-        success += br.getSuccessCount();
-        failure += br.getFailureCount();
+        String response = FirebaseMessaging.getInstance().send(mb.build());
+
+        return "Sent to topic: " + topic + " | response: " + response + " | type=" + finalType;
     }
 
-    return "Sent to ALL users (tokens from DB). TotalTokens=" + total
-            + " Success=" + success
-            + " Failure=" + failure
-            + " | type=" + finalType;
-}
-    // ----------------- Firebase Admin DB read (NO ref.get()) -----------------
+    // ----------------- Firebase Admin DB read -----------------
 
     private List<String> fetchAllTokensFromUsersDatabase() throws Exception {
 
         DatabaseReference ref = FirebaseDatabase.getInstance().getReference("users_database");
 
         final CountDownLatch latch = new CountDownLatch(1);
-
         final List<String> tokens = new ArrayList<>();
         final Set<String> uniq = new HashSet<>();
-
         final String[] errorHolder = new String[1];
 
         ref.addListenerForSingleValueEvent(new ValueEventListener() {
@@ -239,8 +297,8 @@ public String sendNotificationToAllUsers(
     }
 
     private String firstNonEmpty(String a, String b) {
-        if (a != null && !a.trim().isEmpty()) return a.trim();
-        if (b != null && !b.trim().isEmpty()) return b.trim();
+        if (notEmpty(a)) return a.trim();
+        if (notEmpty(b)) return b.trim();
         return null;
     }
 
