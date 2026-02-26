@@ -10,19 +10,17 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 public class NotificationController {
 
-    // ✅ Simple test URL (so we know mapping works)
-    @GetMapping("/")
+    // ✅ move this away from "/"
+    @GetMapping("/api")
     public String home() {
         return "OK - backend running";
     }
 
-    // ✅ Another test URL
     @GetMapping("/api/ping")
     public String ping() {
         return "pong";
     }
 
-    // ✅ MAIN endpoint (GET) — matches your browser test
     @GetMapping("/api/send-notification")
     public String sendNotification(
             @RequestParam("token") String token,
@@ -33,7 +31,6 @@ public class NotificationController {
             @RequestParam(value = "text", required = false) String text
     ) throws Exception {
 
-        // ✅ Data payload (your Android code reads this)
         Message.Builder mb = Message.builder()
                 .setToken(token)
                 .putData("action_type", actionType);
@@ -41,7 +38,7 @@ public class NotificationController {
         if (url != null) mb.putData("url", url);
         if (text != null) mb.putData("text", text);
 
-        // Optional: show notification on device (can remove later)
+        // Optional notification display
         mb.setNotification(Notification.builder().setTitle(title).setBody(body).build());
 
         String response = FirebaseMessaging.getInstance().send(mb.build());
