@@ -50,14 +50,13 @@ public class NotificationController {
             @RequestParam("token") String token,
             @RequestParam(value = "title", defaultValue = "Amritvela") String title,
             @RequestParam(value = "body", defaultValue = "Testing") String body,
-
             @RequestParam(value = "action_type", required = false) String actionType,
             @RequestParam(value = "type", required = false) String type,
 
             @RequestParam(value = "url", required = false) String url,
             @RequestParam(value = "video_url", required = false) String videoUrl,
             @RequestParam(value = "web_url", required = false) String webUrl,
-
+	    @RequestParam(value = "activity_name", required = false) String activityName,
             @RequestParam(value = "text", required = false) String text,
             @RequestParam(value = "use_notification", defaultValue = "true") boolean useNotification
     ) throws Exception {
@@ -84,6 +83,10 @@ public class NotificationController {
 
         if (notEmpty(text)) mb.putData("text", text.trim());
 
+	if ("OPEN_ACTIVITY".equalsIgnoreCase(finalType) && notEmpty(activityName)) {
+	    mb.putData("activity_name", activityName.trim());
+	}
+
         if (useNotification) {
             mb.setNotification(Notification.builder().setTitle(title).setBody(body).build());
         }
@@ -93,6 +96,7 @@ public class NotificationController {
         return "Sent: " + response
                 + " | type=" + finalType
                 + " | video_url=" + (finalVideoUrl == null ? "" : finalVideoUrl)
+		+ " | activity_name=" + (activityName == null ? "" : activityName)
                 + " | web_url=" + (finalWebUrl == null ? "" : finalWebUrl);
     }
 
@@ -114,7 +118,7 @@ public class NotificationController {
             @RequestParam(value = "video_url", required = false) String videoUrl,
             @RequestParam(value = "web_url", required = false) String webUrl,
             @RequestParam(value = "text", required = false) String text,
-
+	    @RequestParam(value = "activity_name", required = false) String activityName,
             @RequestParam(value = "use_notification", defaultValue = "true") boolean useNotification
     ) throws Exception {
 
@@ -163,6 +167,9 @@ public class NotificationController {
 
             if (notEmpty(text)) mb.putData("text", text.trim());
 
+		if ("OPEN_ACTIVITY".equalsIgnoreCase(finalType) && notEmpty(activityName)) {
+		    mb.putData("activity_name", activityName.trim());
+		}
             if (useNotification) {
                 mb.setNotification(Notification.builder().setTitle(title).setBody(body).build());
             }
@@ -172,10 +179,11 @@ public class NotificationController {
             failure += br.getFailureCount();
         }
 
-        return "Sent to ALL users (tokens from DB). TotalTokens=" + total
-                + " Success=" + success
-                + " Failure=" + failure
-                + " | type=" + finalType;
+return "Sent to ALL users (tokens from DB). TotalTokens=" + total
+        + " Success=" + success
+        + " Failure=" + failure
+        + " | type=" + finalType
+        + " | activity_name=" + (activityName == null ? "" : activityName);
     }
 
     // -------------------- TOPIC SEND --------------------
@@ -189,6 +197,7 @@ public class NotificationController {
             @RequestParam(value = "video_url", required = false) String videoUrl,
             @RequestParam(value = "web_url", required = false) String webUrl,
             @RequestParam(value = "text", required = false) String text,
+	    @RequestParam(value = "activity_name", required = false) String activityName,
             @RequestParam(value = "use_notification", defaultValue = "true") boolean useNotification
     ) throws Exception {
 
@@ -224,6 +233,10 @@ public class NotificationController {
         }
 
         if (notEmpty(text)) mb.putData("text", text.trim());
+	
+	if ("OPEN_ACTIVITY".equalsIgnoreCase(finalType) && notEmpty(activityName)) {
+	    mb.putData("activity_name", activityName.trim());
+	}
 
         if (useNotification) {
             mb.setNotification(Notification.builder().setTitle(title).setBody(body).build());
@@ -231,7 +244,10 @@ public class NotificationController {
 
         String response = FirebaseMessaging.getInstance().send(mb.build());
 
-        return "Sent to topic: " + topic + " | response: " + response + " | type=" + finalType;
+       return "Sent to topic: " + topic
+        + " | response: " + response
+        + " | type=" + finalType
+        + " | activity_name=" + (activityName == null ? "" : activityName);
     }
 
     // ----------------- Firebase Admin DB read -----------------
